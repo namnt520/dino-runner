@@ -1,6 +1,7 @@
 use macroquad::prelude::*;
 
 use crate::config::*;
+use crate::entities::skin::Skin;
 use crate::game::GameState;
 use crate::score::Score;
 use crate::theme::Theme;
@@ -40,14 +41,41 @@ pub fn draw_weather_label(label: Option<&str>, intensity: f32, theme: &Theme) {
     }
 }
 
+/// Dòng chọn skin, ví dụ "<  Shades  >"
+pub fn skin_selector_text(skin: Skin) -> String {
+    format!("<  {}  >", skin.name())
+}
+
+/// Gợi ý mục tiêu mở khóa kế tiếp theo high score hiện tại
+pub fn next_skin_hint(high: u32) -> String {
+    match Skin::next_locked(high) {
+        Some(skin) => format!("Next skin: {} at {} pts", skin.name(), skin.unlock_score()),
+        None => "All skins unlocked!".to_string(),
+    }
+}
+
+/// Dòng chọn skin và gợi ý mở khóa, bắt đầu từ tọa độ `y`
+fn draw_skin_section(skin: Skin, high: u32, y: f32, color: Color) {
+    draw_centered_text(&skin_selector_text(skin), y, 22, color);
+    draw_centered_text(&next_skin_hint(high), y + 24.0, 18, color);
+}
+
 /// Hiển thị UI theo trạng thái State Machine
-pub fn draw_state_overlay(state: GameState, score: &Score, theme: &Theme) {
+pub fn draw_state_overlay(
+    state: GameState,
+    score: &Score,
+    theme: &Theme,
+    skin: Skin,
+    new_skin: Option<Skin>,
+) {
     let primary_color = theme.primary;
     match state {
         GameState::Waiting => {
             draw_centered_text("CHROME DINO RUNNER", 140.0, 32, primary_color);
             draw_centered_text("Press Space to Start", 180.0, 24, primary_color);
             draw_centered_text("Space / Up: Jump     Down: Duck", 212.0, 20, primary_color);
+            draw_centered_text("Left / Right: Change skin", 238.0, 20, primary_color);
+            draw_skin_section(skin, score.high(), 268.0, primary_color);
         }
         GameState::GameOver => {
             draw_centered_text("G A M E  O V E R", 130.0, 34, primary_color);
@@ -58,6 +86,11 @@ pub fn draw_state_overlay(state: GameState, score: &Score, theme: &Theme) {
             );
             draw_centered_text(&final_score_msg, 168.0, 22, primary_color);
             draw_centered_text("Press Space to Restart", 205.0, 24, primary_color);
+            if let Some(unlocked) = new_skin {
+                let banner = format!("NEW SKIN UNLOCKED: {}!", unlocked.name());
+                draw_centered_text(&banner, 238.0, 22, primary_color);
+            }
+            draw_skin_section(skin, score.high(), 268.0, primary_color);
         }
         GameState::Playing => {}
     }
@@ -66,6 +99,22 @@ pub fn draw_state_overlay(state: GameState, score: &Score, theme: &Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skin_selector_shows_the_skin_name_between_arrows() {
+        assert_eq!(skin_selector_text(Skin::TopHat), "<  Top Hat  >");
+    }
+
+    #[test]
+    fn hint_names_the_next_locked_skin_and_its_score() {
+        assert_eq!(next_skin_hint(0), "Next skin: Shades at 300 pts");
+        assert_eq!(next_skin_hint(300), "Next skin: Top Hat at 700 pts");
+    }
+
+    #[test]
+    fn hint_celebrates_when_everything_is_unlocked() {
+        assert_eq!(next_skin_hint(Skin::Crown.unlock_score()), "All skins unlocked!");
+    }
 
     #[test]
     fn score_is_visible_when_not_flashing() {

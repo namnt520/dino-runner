@@ -1,6 +1,7 @@
 use macroquad::prelude::*;
 
 use crate::config::*;
+use crate::entities::skin::{Head, Skin};
 use crate::theme::Theme;
 
 /// Chiều cao của khủng long khi cúi
@@ -127,15 +128,15 @@ impl Dino {
         }
     }
 
-    pub fn draw(&self, is_dead: bool, theme: &Theme) {
+    pub fn draw(&self, is_dead: bool, theme: &Theme, skin: Skin) {
         if self.is_ducking() && self.is_grounded() {
-            self.draw_ducking(is_dead, theme);
+            self.draw_ducking(is_dead, theme, skin);
         } else {
-            self.draw_standing(is_dead, theme);
+            self.draw_standing(is_dead, theme, skin);
         }
     }
 
-    fn draw_ducking(&self, is_dead: bool, theme: &Theme) {
+    fn draw_ducking(&self, is_dead: bool, theme: &Theme, skin: Skin) {
         let color = theme.primary;
         let bg_color = theme.bg;
         let x = self.x;
@@ -169,9 +170,13 @@ impl Dino {
         };
         draw_rectangle(x + 10.0, GROUND_Y - left_h, 5.0, left_h, color);
         draw_rectangle(x + 22.0, GROUND_Y - right_h, 5.0, right_h, color);
+
+        // 6. Phụ kiện của skin
+        let head = Head { x: x + 30.0, y: t, eye_x: x + 37.0, eye_y: t + 3.0 };
+        skin.draw_accessory(head, is_dead);
     }
 
-    fn draw_standing(&self, is_dead: bool, theme: &Theme) {
+    fn draw_standing(&self, is_dead: bool, theme: &Theme, skin: Skin) {
         let color = theme.primary;
         let bg_color = theme.bg;
         let x = self.x;
@@ -217,6 +222,10 @@ impl Dino {
             draw_rectangle(x + 20.0, y + 34.0, 5.0, 12.0, color);
             draw_rectangle(x + 20.0, y + 44.0, 7.0, 2.0, color);
         }
+
+        // 7. Phụ kiện của skin
+        let head = Head { x: x + 18.0, y, eye_x: x + 24.0, eye_y: y + 4.0 };
+        skin.draw_accessory(head, is_dead);
     }
 }
 

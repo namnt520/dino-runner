@@ -3,12 +3,15 @@ use std::path::{Path, PathBuf};
 
 /// File lưu high score, nằm trong thư mục hiện tại của tiến trình
 /// (khi chạy `cargo run` ở thư mục dự án thì đó chính là thư mục dự án).
+/// Định dạng: dòng 1 là high score, dòng 2 (có thể thiếu) là chỉ số skin đang chọn.
 const HIGH_SCORE_FILE: &str = "highscore.txt";
 
-/// Điểm hiện tại và điểm cao nhất (được lưu ra file).
+/// Điểm hiện tại và điểm cao nhất (được lưu ra file, cùng với skin đang chọn).
 pub struct Score {
     current: f32,
     high: u32,
+    /// Chỉ số skin đang chọn (xem `entities::skin`)
+    skin: usize,
     /// Mốc 100 điểm gần nhất đã được báo (xem `take_milestone`)
     last_milestone: u32,
     path: PathBuf,
@@ -22,10 +25,11 @@ impl Score {
     /// Dùng file lưu tùy chọn (để unit test không đụng vào file thật).
     pub fn with_file(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let high = load_high_score(&path).unwrap_or(0);
+        let (high, skin) = load_saved(&path);
         Self {
             current: 0.0,
             high,
+            skin,
             last_milestone: 0,
             path,
         }
@@ -71,20 +75,39 @@ impl Score {
         let final_score = self.current();
         if final_score > self.high {
             self.high = final_score;
-            save_high_score(&self.path, self.high);
+            save(&self.path, self.high, self.skin);
+        }
+    }
+
+    pub fn skin_index(&self) -> usize {
+        self.skin
+    }
+
+    /// Đổi skin đang chọn và lưu ngay (không ghi file nếu không có gì thay đổi).
+    pub fn set_skin_index(&mut self, skin: usize) {
+        if skin != self.skin {
+            self.skin = skin;
+            save(&self.path, self.high, self.skin);
         }
     }
 }
 
-/// Đọc high score từ file; thiếu file hoặc nội dung hỏng thì trả về `None`.
-fn load_high_score(path: &Path) -> Option<u32> {
-    fs::read_to_string(path).ok()?.trim().parse().ok()
+/// Đọc (high score, chỉ số skin) từ file; thiếu file hoặc nội dung hỏng thì dùng 0.
+/// File cũ chỉ có mỗi high score vẫn đọc được (skin = 0).
+fn load_saved(path: &Path) -> (u32, usize) {
+    let Ok(content) = fs::read_to_string(path) else {
+        return (0, 0);
+    };
+    let mut lines = content.lines();
+    let high = lines.next().and_then(|l| l.trim().parse().ok()).unwrap_or(0);
+    let skin = lines.next().and_then(|l| l.trim().parse().ok()).unwrap_or(0);
+    (high, skin)
 }
 
-/// Ghi high score ra file. Lỗi ghi chỉ được báo ra stderr, game vẫn chạy tiếp.
-fn save_high_score(path: &Path, high: u32) {
-    if let Err(err) = fs::write(path, high.to_string()) {
-        eprintln!("Không lưu được high score vào {}: {err}", path.display());
+/// Ghi high score và skin ra file. Lỗi ghi chỉ được báo ra stderr, game vẫn chạy tiếp.
+fn save(path: &Path, high: u32, skin: usize) {
+    if let Err(err) = fs::write(path, format!("{high}\n{skin}")) {
+        eprintln!("Không lưu được dữ liệu vào {}: {err}", path.display());
     }
 }
 
@@ -148,7 +171,7 @@ mod tests {
         score.advance(1.0, 280.0);
         score.commit_high();
         assert_eq!(score.high(), 10);
-        assert_eq!(fs::read_to_string(&file.0).unwrap(), "10");
+        assert_eq!(fs::read_to_string(&file.0).unwrap(), "10\n0");
 
         assert_eq!(Score::with_file(&file.0).high(), 10);
     }
@@ -189,6 +212,66 @@ mod tests {
         score.advance(1.0, 280.0);
         score.commit_high();
         assert_eq!(score.high(), 10);
+    }
+
+    // ---------- Skin được lưu cùng high score ----------
+
+    #[test]
+    fn old_files_with_only_a_high_score_load_with_the_default_skin() {
+        let file = TempFile::new("old_format");
+        fs::write(&file.0, "123").unwrap();
+        let score = Score::with_file(&file.0);
+        assert_eq!((score.high(), score.skin_index()), (123, 0));
+    }
+
+    #[test]
+    fn skin_choice_is_saved_and_loaded_back() {
+        let file = TempFile::new("skin_saved");
+        let mut score = Score::with_file(&file.0);
+        score.set_skin_index(2);
+        assert_eq!(fs::read_to_string(&file.0).unwrap(), "0\n2");
+        assert_eq!(Score::with_file(&file.0).skin_index(), 2);
+    }
+
+    #[test]
+    fn saving_a_record_keeps_the_chosen_skin_and_vice_versa() {
+        let file = TempFile::new("skin_and_record");
+        let mut score = Score::with_file(&file.0);
+        score.set_skin_index(1);
+        score.advance(1.0, 280.0);
+        score.commit_high();
+
+        let reloaded = Score::with_file(&file.0);
+        assert_eq!((reloaded.high(), reloaded.skin_index()), (10, 1));
+
+        let mut score = reloaded;
+        score.set_skin_index(3);
+        assert_eq!(Score::with_file(&file.0).high(), 10, "đổi skin không làm mất high score");
+    }
+
+    #[test]
+    fn choosing_the_same_skin_does_not_touch_the_file() {
+        let file = TempFile::new("skin_same");
+        let mut score = Score::with_file(&file.0);
+        score.set_skin_index(0);
+        assert!(!file.0.exists());
+    }
+
+    #[test]
+    fn a_corrupted_skin_line_falls_back_to_the_default_skin() {
+        let file = TempFile::new("skin_corrupted");
+        fs::write(&file.0, "80\nabc").unwrap();
+        let score = Score::with_file(&file.0);
+        assert_eq!((score.high(), score.skin_index()), (80, 0));
+    }
+
+    #[test]
+    fn reset_keeps_the_chosen_skin() {
+        let file = TempFile::new("skin_reset");
+        let mut score = Score::with_file(&file.0);
+        score.set_skin_index(2);
+        score.reset();
+        assert_eq!(score.skin_index(), 2);
     }
 
     #[test]

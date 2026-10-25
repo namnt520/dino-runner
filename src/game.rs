@@ -5,6 +5,7 @@ use crate::config::*;
 use crate::effects::{shake_camera, Effects};
 use crate::entities::dino::Dino;
 use crate::entities::obstacle::Obstacle;
+use crate::entities::skin::Skin;
 use crate::input::Input;
 use crate::score::Score;
 use crate::spawner::Spawner;
@@ -52,6 +53,10 @@ pub struct Game {
     weather: Weather,
     spawner: Spawner,
     score: Score,
+    /// Skin đang chọn (đổi bằng ← → ở màn hình chờ và màn hình thua)
+    skin: Skin,
+    /// Skin vừa mở khóa nhờ ván vừa rồi (để thông báo ở màn hình thua)
+    new_skin: Option<Skin>,
     speed: f32,
     /// Mức đêm hiện tại (0 = ngày, 1 = đêm), tính từ điểm số
     night: f32,
@@ -66,6 +71,8 @@ impl Game {
         // Thứ tự khởi tạo (mặt đất rồi mây) giữ nguyên để chuỗi random không đổi
         let ground = Ground::new();
         let clouds = Clouds::new();
+        let score = Score::new();
+        let skin = Skin::restore(score.skin_index(), score.high());
 
         Self {
             state: GameState::Waiting,
@@ -77,7 +84,9 @@ impl Game {
             effects: Effects::new(),
             weather: Weather::new(),
             spawner: Spawner::new(),
-            score: Score::new(),
+            score,
+            skin,
+            new_skin: None,
             speed: INITIAL_SPEED,
             night: 0.0,
             theme: Theme::chrome(),
@@ -111,6 +120,7 @@ impl Game {
         self.speed = INITIAL_SPEED;
         self.score.reset();
         self.flash_timer = 0.0;
+        self.new_skin = None;
         self.spawner.reset();
         self.state = GameState::Playing;
     }
@@ -138,7 +148,24 @@ impl Game {
         self.theme = Theme::chrome().lerp(&Theme::night(), self.night);
     }
 
+    /// ← → đổi giữa các skin đã mở khóa và lưu lại lựa chọn
+    fn change_skin(&mut self, input: &Input) {
+        let high = self.score.high();
+        let next = if input.right_pressed {
+            self.skin.next_unlocked(high)
+        } else if input.left_pressed {
+            self.skin.prev_unlocked(high)
+        } else {
+            return;
+        };
+        if next != self.skin {
+            self.skin = next;
+            self.score.set_skin_index(next.index());
+        }
+    }
+
     fn update_waiting(&mut self, input: &Input) {
+        self.change_skin(input);
         if input.jump_pressed {
             if self.dino.jump_with(self.weather.jump_multiplier()) {
                 self.events.push(GameEvent::Jump);
@@ -194,13 +221,16 @@ impl Game {
         // Kiểm tra va chạm
         if collision::dino_hits_any(&self.dino, &self.obstacles) {
             self.state = GameState::GameOver;
+            let old_high = self.score.high();
             self.score.commit_high();
+            self.new_skin = Skin::newly_unlocked(old_high, self.score.high());
             self.effects.start_shake();
             self.events.push(GameEvent::Die);
         }
     }
 
     fn update_game_over(&mut self, input: &Input) {
+        self.change_skin(input);
         if input.jump_pressed {
             self.reset();
         }
@@ -232,7 +262,7 @@ impl Game {
 
         // 5. Khủng long và bụi tiếp đất
         let is_dead = self.state == GameState::GameOver;
-        self.dino.draw(is_dead, &self.theme);
+        self.dino.draw(is_dead, &self.theme, self.skin);
         self.effects.draw(&self.theme);
 
         // 6. Thời tiết (hạt mưa, gió, cát và lớp phủ làm mờ tầm nhìn)
@@ -241,7 +271,7 @@ impl Game {
         // 7. Điểm số & UI theo trạng thái
         ui::draw_hud(&self.score, &self.theme, ui::score_blinks_off(self.flash_timer));
         ui::draw_weather_label(self.weather.label(), self.weather.intensity(), &self.theme);
-        ui::draw_state_overlay(self.state, &self.score, &self.theme);
+        ui::draw_state_overlay(self.state, &self.score, &self.theme, self.skin, self.new_skin);
 
         if shaking {
             set_default_camera();
