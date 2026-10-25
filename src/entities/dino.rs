@@ -54,9 +54,16 @@ impl Dino {
     }
 
     /// Nhảy nếu đang đứng trên đất. Trả về `true` nếu thực sự vừa nhảy.
+    #[cfg(test)]
     pub fn jump(&mut self) -> bool {
+        self.jump_with(1.0)
+    }
+
+    /// Nhảy với lực bằng `multiplier` lần bình thường (ví dụ gió ngược làm cú nhảy yếu đi).
+    /// Trả về `true` nếu thực sự vừa nhảy.
+    pub fn jump_with(&mut self, multiplier: f32) -> bool {
         if self.is_grounded {
-            self.vy = JUMP_FORCE;
+            self.vy = JUMP_FORCE * multiplier;
             self.is_grounded = false;
             self.is_ducking = false;
             true
@@ -322,5 +329,57 @@ mod tests {
         assert_eq!(y, GROUND_Y);
         let hitbox = dino.hitbox();
         assert!(x > hitbox.x && x < hitbox.x + hitbox.w);
+    }
+
+    /// (độ cao đỉnh nhảy so với mặt đất, số khung hình ở trên không) của một cú nhảy
+    fn jump_stats(multiplier: f32) -> (f32, u32) {
+        let mut dino = Dino::new();
+        let standing_y = dino.hitbox().y;
+        assert!(dino.jump_with(multiplier));
+        let mut highest = 0.0_f32;
+        let mut frames = 0;
+        while !dino.is_grounded() {
+            dino.update(DT, false);
+            frames += 1;
+            highest = highest.max(standing_y - dino.hitbox().y);
+            assert!(frames < 10_000, "khủng long không bao giờ chạm đất");
+        }
+        (highest, frames)
+    }
+
+    #[test]
+    fn normal_jump_reaches_about_105_pixels() {
+        let (height, _) = jump_stats(1.0);
+        assert!((100.0..=112.0).contains(&height), "{height}");
+    }
+
+    #[test]
+    fn weaker_jump_is_lower_and_never_longer() {
+        let (full_height, full_frames) = jump_stats(1.0);
+        for multiplier in [0.97, 0.94, 0.9] {
+            let (height, frames) = jump_stats(multiplier);
+            assert!(height < full_height, "x{multiplier}: {height} >= {full_height}");
+            assert!(frames <= full_frames, "x{multiplier}: {frames} > {full_frames}");
+        }
+    }
+
+    #[test]
+    fn even_the_weakest_wind_jump_clears_the_tallest_cactus() {
+        // Xương rồng cao nhất là 54px; chừa dư thêm một chút cho hitbox
+        let (height, _) = jump_stats(0.9);
+        assert!(height > 54.0 + 20.0, "{height}");
+    }
+
+    #[test]
+    fn plain_jump_matches_jump_with_full_strength() {
+        let mut a = Dino::new();
+        let mut b = Dino::new();
+        a.jump();
+        b.jump_with(1.0);
+        for _ in 0..10 {
+            a.update(DT, false);
+            b.update(DT, false);
+        }
+        assert_eq!(a.hitbox().y, b.hitbox().y);
     }
 }

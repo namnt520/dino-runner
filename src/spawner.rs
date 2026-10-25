@@ -75,8 +75,13 @@ mod tests {
 
     /// Mô phỏng một cú nhảy đầy đủ và trả về thời gian ở trên không (giây)
     fn simulated_air_time(dt: f32) -> f32 {
+        simulated_air_time_with(dt, 1.0)
+    }
+
+    /// Như trên nhưng với lực nhảy bằng `multiplier` lần bình thường (gió làm cú nhảy yếu đi)
+    fn simulated_air_time_with(dt: f32, multiplier: f32) -> f32 {
         let mut dino = Dino::new();
-        dino.jump();
+        dino.jump_with(multiplier);
         let mut elapsed = 0.0;
         let mut steps = 0;
         while !dino.is_grounded() {
@@ -103,6 +108,18 @@ mod tests {
                     min_safe_gap(speed),
                     speed * air_time
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn a_weaker_wind_jump_never_stays_in_the_air_longer() {
+        // Thời tiết chỉ làm cú nhảy yếu đi, nên khoảng cách tối thiểu vẫn luôn đủ
+        for dt in [1.0 / 144.0, 1.0 / 60.0, 1.0 / 30.0, 0.05] {
+            let normal = simulated_air_time(dt);
+            for multiplier in [0.97, 0.94, 0.9] {
+                let weak = simulated_air_time_with(dt, multiplier);
+                assert!(weak <= normal + 1e-6, "dt={dt}, x{multiplier}: {weak} > {normal}");
             }
         }
     }

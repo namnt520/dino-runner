@@ -102,6 +102,136 @@ pub fn milestone_sound() -> Vec<u8> {
     ]))
 }
 
+// ==========================================
+// ÂM NỀN: MƯA, GIÓ, BÃO CÁT (nhiễu trắng đã lọc, lặp liền mạch)
+// ==========================================
+
+/// Bộ sinh nhiễu trắng xorshift32. Cùng seed thì luôn ra cùng một âm thanh,
+/// và không phụ thuộc vào `macroquad::rand` nên test được ổn định.
+struct Noise(u32);
+
+impl Noise {
+    fn new(seed: u32) -> Self {
+        Self(seed.max(1)) // xorshift bị kẹt ở 0 nếu seed = 0
+    }
+
+    /// Số ngẫu nhiên trong -1..1
+    fn next(&mut self) -> f32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.0 = x;
+        x as f32 / u32::MAX as f32 * 2.0 - 1.0
+    }
+}
+
+fn white_noise(seed: u32, len: usize) -> Vec<f32> {
+    let mut noise = Noise::new(seed);
+    (0..len).map(|_| noise.next()).collect()
+}
+
+/// Bộ lọc thông thấp một cực: cắt bớt âm cao, còn lại tiếng trầm "ù ù"
+fn low_pass(samples: &[f32], cutoff_hz: f32) -> Vec<f32> {
+    let dt = 1.0 / SAMPLE_RATE as f32;
+    let rc = 1.0 / (2.0 * PI * cutoff_hz);
+    let alpha = dt / (rc + dt);
+    let mut y = 0.0;
+    samples
+        .iter()
+        .map(|x| {
+            y += alpha * (*x - y);
+            y
+        })
+        .collect()
+}
+
+/// Bộ lọc thông cao: bỏ âm trầm, còn lại tiếng "xì xì"
+fn high_pass(samples: &[f32], cutoff_hz: f32) -> Vec<f32> {
+    let low = low_pass(samples, cutoff_hz);
+    samples.iter().zip(low).map(|(x, l)| *x - l).collect()
+}
+
+/// Số mẫu đầu bỏ đi vì bộ lọc chưa ổn định
+const WARMUP: usize = 2_000;
+/// Đoạn đuôi được hòa vào đầu (100ms) để vòng lặp không bị tiếng "tách"
+const LOOP_FADE: usize = 4_410;
+
+/// Nhiễu trắng đã qua `filter`, dài đúng `len` mẫu và nối được đầu với đuôi một cách liền mạch:
+/// `LOOP_FADE` mẫu đầu là sự hòa trộn (equal-power) giữa đầu và đoạn dư ra ở đuôi,
+/// nên mẫu cuối nối thẳng vào mẫu đầu như một đoạn liên tục.
+fn looped_noise(seed: u32, len: usize, filter: impl Fn(&[f32]) -> Vec<f32>) -> Vec<f32> {
+    let filtered = filter(&white_noise(seed, WARMUP + len + LOOP_FADE));
+    let body = &filtered[WARMUP..];
+    (0..len)
+        .map(|i| {
+            if i < LOOP_FADE {
+                let t = i as f32 / LOOP_FADE as f32 * PI / 2.0;
+                body[i] * t.sin() + body[len + i] * t.cos()
+            } else {
+                body[i]
+            }
+        })
+        .collect()
+}
+
+/// Co giãn để mẫu lớn nhất có biên độ đúng `target_peak`
+fn normalize(samples: Vec<f32>, target_peak: f32) -> Vec<f32> {
+    let peak = samples.iter().fold(0.0_f32, |max, s| max.max(s.abs()));
+    if peak <= 0.0 {
+        return samples;
+    }
+    samples.into_iter().map(|s| s * target_peak / peak).collect()
+}
+
+/// Cường độ từng đợt gió giật (khoảng 0.2..1.0), tuần hoàn theo độ dài vòng lặp
+fn gust(i: usize, len: usize) -> f32 {
+    let t = i as f32 / len as f32 * 2.0 * PI;
+    0.6 + 0.25 * t.sin() + 0.15 * (3.0 * t + 1.3).sin()
+}
+
+const RAIN_SECONDS: usize = 2;
+const WIND_SECONDS: usize = 4;
+
+/// Mưa: nhiễu "xì xì" đều, không có đợt mạnh yếu
+fn rain_samples() -> Vec<f32> {
+    let hiss = looped_noise(7, SAMPLE_RATE as usize * RAIN_SECONDS, |raw| {
+        low_pass(&high_pass(raw, 700.0), 6000.0)
+    });
+    normalize(hiss, 0.30)
+}
+
+/// Gió: tiếng trầm "ù ù" lên xuống theo từng đợt giật
+fn wind_samples() -> Vec<f32> {
+    let len = SAMPLE_RATE as usize * WIND_SECONDS;
+    let rumble = normalize(looped_noise(11, len, |raw| low_pass(raw, 350.0)), 1.0);
+    let gusting = rumble.iter().enumerate().map(|(i, s)| s * gust(i, len)).collect();
+    normalize(gusting, 0.50)
+}
+
+/// Bão cát: gió dày hơn (trầm lẫn trung) cộng thêm tiếng hạt cát lép bép
+fn sandstorm_samples() -> Vec<f32> {
+    let len = SAMPLE_RATE as usize * WIND_SECONDS;
+    let body = normalize(looped_noise(23, len, |raw| low_pass(raw, 900.0)), 1.0);
+    let grit = normalize(looped_noise(31, len, |raw| high_pass(raw, 2500.0)), 1.0);
+    let mixed = (0..len)
+        .map(|i| (body[i] * 0.8 + grit[i] * 0.25) * gust(i, len))
+        .collect();
+    normalize(mixed, 0.45)
+}
+
+pub fn rain_sound() -> Vec<u8> {
+    to_wav(&rain_samples())
+}
+
+pub fn wind_sound() -> Vec<u8> {
+    to_wav(&wind_samples())
+}
+
+pub fn sandstorm_sound() -> Vec<u8> {
+    to_wav(&sandstorm_samples())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +359,127 @@ mod tests {
                 samples.abs_diff(expected) <= 3,
                 "{samples} mẫu, mong đợi khoảng {expected}"
             );
+        }
+    }
+
+    // ---------- Âm nền (mưa, gió, bão cát) ----------
+
+    fn mean(samples: &[f32]) -> f32 {
+        samples.iter().sum::<f32>() / samples.len() as f32
+    }
+
+    /// Độ "gai" của âm: biến thiên giữa hai mẫu liên tiếp so với biên độ trung bình
+    /// (nhiễu trắng rất gai, âm trầm thì mượt)
+    fn roughness(samples: &[f32]) -> f32 {
+        let step = samples.windows(2).map(|p| (p[1] - p[0]).abs()).sum::<f32>()
+            / (samples.len() - 1) as f32;
+        step / (samples.iter().map(|s| s.abs()).sum::<f32>() / samples.len() as f32)
+    }
+
+    fn max_step(samples: &[f32]) -> f32 {
+        samples.windows(2).fold(0.0_f32, |max, p| max.max((p[1] - p[0]).abs()))
+    }
+
+    /// Tỷ lệ giữa quãng nửa giây to nhất và nhỏ nhất (1.0 = hoàn toàn đều)
+    fn loudness_swing(samples: &[f32]) -> f32 {
+        let window = SAMPLE_RATE as usize / 2;
+        let levels: Vec<f32> = samples
+            .chunks_exact(window)
+            .map(|chunk| (chunk.iter().map(|s| s * s).sum::<f32>() / window as f32).sqrt())
+            .collect();
+        let max = levels.iter().cloned().fold(0.0_f32, f32::max);
+        let min = levels.iter().cloned().fold(f32::MAX, f32::min);
+        max / min
+    }
+
+    fn ambience() -> [(&'static str, Vec<f32>, f32); 3] {
+        [
+            ("rain", rain_samples(), 0.30),
+            ("wind", wind_samples(), 0.50),
+            ("sandstorm", sandstorm_samples(), 0.45),
+        ]
+    }
+
+    #[test]
+    fn noise_is_deterministic_per_seed_and_stays_in_range() {
+        assert_eq!(white_noise(5, 1000), white_noise(5, 1000));
+        assert_ne!(white_noise(5, 1000), white_noise(6, 1000));
+        assert!(white_noise(5, 20_000).iter().all(|s| (-1.0..=1.0).contains(s)));
+    }
+
+    #[test]
+    fn noise_is_centered_and_does_not_get_stuck_on_seed_zero() {
+        assert!(mean(&white_noise(1, 20_000)).abs() < 0.05);
+        let zero_seed = white_noise(0, 100);
+        assert!(zero_seed.iter().any(|s| *s != zero_seed[0]));
+    }
+
+    #[test]
+    fn low_pass_smooths_and_high_pass_keeps_the_hiss() {
+        let noise = white_noise(3, 20_000);
+        assert!(roughness(&low_pass(&noise, 350.0)) < roughness(&noise) / 2.0);
+        assert!(roughness(&high_pass(&noise, 2500.0)) >= roughness(&noise) * 0.9);
+        assert!(mean(&high_pass(&noise, 700.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn ambience_loops_have_the_designed_length() {
+        assert_eq!(rain_samples().len(), 44_100 * 2);
+        assert_eq!(wind_samples().len(), 44_100 * 4);
+        assert_eq!(sandstorm_samples().len(), 44_100 * 4);
+    }
+
+    #[test]
+    fn ambience_peaks_match_their_target_volume() {
+        for (name, samples, target) in ambience() {
+            assert!((peak(&samples) - target).abs() < 1e-4, "{name}: {}", peak(&samples));
+        }
+    }
+
+    #[test]
+    fn ambience_is_centered_on_zero() {
+        for (name, samples, _) in ambience() {
+            assert!(mean(&samples).abs() < 0.02, "{name}: {}", mean(&samples));
+        }
+    }
+
+    #[test]
+    fn ambience_loops_without_a_click() {
+        // Bước nhảy từ mẫu cuối về mẫu đầu không lớn hơn bước nhảy bình thường trong âm thanh
+        for (name, samples, _) in ambience() {
+            let seam = (samples[0] - samples[samples.len() - 1]).abs();
+            assert!(seam <= 2.0 * max_step(&samples), "{name}: seam {seam}");
+        }
+    }
+
+    #[test]
+    fn rain_is_hissier_than_wind_and_sandstorm_is_in_between() {
+        let (rain, wind, sand) = (
+            roughness(&rain_samples()),
+            roughness(&wind_samples()),
+            roughness(&sandstorm_samples()),
+        );
+        assert!(rain > sand && sand > wind, "rain={rain}, sand={sand}, wind={wind}");
+    }
+
+    #[test]
+    fn wind_and_sandstorm_swell_but_rain_stays_steady() {
+        assert!(loudness_swing(&wind_samples()) > 1.5);
+        assert!(loudness_swing(&sandstorm_samples()) > 1.5);
+        assert!(loudness_swing(&rain_samples()) < 1.3);
+    }
+
+    #[test]
+    fn ambience_wav_files_are_valid() {
+        let sounds = [
+            (rain_sound(), rain_samples().len()),
+            (wind_sound(), wind_samples().len()),
+            (sandstorm_sound(), sandstorm_samples().len()),
+        ];
+        for (wav, samples) in sounds {
+            assert_eq!(&wav[0..4], b"RIFF");
+            assert_eq!(u32_at(&wav, 40) as usize, samples * 2);
+            assert_eq!(wav.len(), 44 + samples * 2);
         }
     }
 

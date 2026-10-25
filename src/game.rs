@@ -13,6 +13,7 @@ use crate::ui;
 use crate::world::cloud::Clouds;
 use crate::world::ground::Ground;
 use crate::world::sky::{night_amount, Sky};
+use crate::world::weather::{Weather, WeatherKind};
 
 /// Điểm số nhấp nháy bấy nhiêu giây mỗi khi qua mốc 100 điểm
 const MILESTONE_FLASH_SECONDS: f32 = 0.8;
@@ -48,6 +49,7 @@ pub struct Game {
     clouds: Clouds,
     sky: Sky,
     effects: Effects,
+    weather: Weather,
     spawner: Spawner,
     score: Score,
     speed: f32,
@@ -73,6 +75,7 @@ impl Game {
             clouds,
             sky: Sky::new(),
             effects: Effects::new(),
+            weather: Weather::new(),
             spawner: Spawner::new(),
             score: Score::new(),
             speed: INITIAL_SPEED,
@@ -88,12 +91,23 @@ impl Game {
         std::mem::take(&mut self.events)
     }
 
+    /// Thời tiết dùng để chọn âm nền (loại, cường độ). Chỉ có tiếng khi đang chơi:
+    /// ở màn hình chờ và khi thua thì trả về trời quang để âm nền tắt.
+    pub fn ambience(&self) -> (WeatherKind, f32) {
+        if self.state == GameState::Playing {
+            (self.weather.kind(), self.weather.intensity())
+        } else {
+            (WeatherKind::Clear, 0.0)
+        }
+    }
+
     fn reset(&mut self) {
         self.dino.reset();
         self.obstacles.clear();
         self.ground.reset();
         self.clouds.reset();
         self.effects.reset();
+        self.weather.reset();
         self.speed = INITIAL_SPEED;
         self.score.reset();
         self.flash_timer = 0.0;
@@ -126,7 +140,7 @@ impl Game {
 
     fn update_waiting(&mut self, input: &Input) {
         if input.jump_pressed {
-            if self.dino.jump() {
+            if self.dino.jump_with(self.weather.jump_multiplier()) {
                 self.events.push(GameEvent::Jump);
             }
             self.state = GameState::Playing;
@@ -135,7 +149,9 @@ impl Game {
 
     fn update_playing(&mut self, dt: f32, input: &Input) {
         // Xử lý nhảy khi đang chạm đất và người chơi nhấn/giữ phím nhảy
-        if (input.jump_pressed || input.jump_held) && self.dino.jump() {
+        // (gió và bão cát làm cú nhảy yếu đi một chút)
+        let jump_strength = self.weather.jump_multiplier();
+        if (input.jump_pressed || input.jump_held) && self.dino.jump_with(jump_strength) {
             self.events.push(GameEvent::Jump);
         }
 
@@ -157,6 +173,9 @@ impl Game {
             self.flash_timer = MILESTONE_FLASH_SECONDS;
             self.events.push(GameEvent::Milestone);
         }
+
+        // Thời tiết (mưa, gió, bão cát) bắt đầu khi đủ điểm
+        self.weather.update(dt, self.score.current());
 
         // Cuộn nền
         self.sky.update(dt, self.speed);
@@ -216,8 +235,12 @@ impl Game {
         self.dino.draw(is_dead, &self.theme);
         self.effects.draw(&self.theme);
 
-        // 6. Điểm số & UI theo trạng thái
+        // 6. Thời tiết (hạt mưa, gió, cát và lớp phủ làm mờ tầm nhìn)
+        self.weather.draw(&self.theme);
+
+        // 7. Điểm số & UI theo trạng thái
         ui::draw_hud(&self.score, &self.theme, ui::score_blinks_off(self.flash_timer));
+        ui::draw_weather_label(self.weather.label(), self.weather.intensity(), &self.theme);
         ui::draw_state_overlay(self.state, &self.score, &self.theme);
 
         if shaking {

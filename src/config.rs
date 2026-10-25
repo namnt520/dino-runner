@@ -20,3 +20,9 @@ pub const SPEED_ACCELERATION: f32 = 12.0; // Tốc độ tăng thêm mỗi giây
 pub const BIRD_MIN_SCORE: u32 = 300;
 /// Tỷ lệ phần trăm mỗi lần spawn ra chim thay vì xương rồng (sau khi đủ điểm)
 pub const BIRD_SPAWN_CHANCE_PERCENT: i32 = 25;
+
+// ==========================================
+// THỜI TIẾT
+// ==========================================
+/// Điểm tối thiểu để thời tiết (mưa, gió, bão cát) bắt đầu xuất hiện
+pub const WEATHER_MIN_SCORE: u32 = 150;

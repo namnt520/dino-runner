@@ -37,7 +37,7 @@ async fn main() {
     // (now() trả về giây dạng f64, nhân 1000 để seed đổi theo mili-giây)
     rand::srand((macroquad::miniquad::date::now() * 1000.0) as u64);
 
-    let sfx = Sfx::load().await;
+    let mut sfx = Sfx::load().await;
     let mut game = Game::new();
 
     loop {
@@ -48,6 +48,8 @@ async fn main() {
         for event in game.take_events() {
             sfx.play(event);
         }
+        let (weather, intensity) = game.ambience();
+        sfx.update_ambience(weather, intensity);
         game.draw();
 
         next_frame().await

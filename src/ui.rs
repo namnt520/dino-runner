@@ -31,6 +31,15 @@ pub fn draw_hud(score: &Score, theme: &Theme, blink_off: bool) {
     draw_text(&shown, x, 36.0, 24.0, theme.primary);
 }
 
+/// Tên thời tiết hiện tại ở góc trên trái, mờ dần theo cường độ
+pub fn draw_weather_label(label: Option<&str>, intensity: f32, theme: &Theme) {
+    if let Some(text) = label {
+        let c = theme.primary;
+        let color = Color::new(c.r, c.g, c.b, intensity.clamp(0.0, 1.0));
+        draw_text(text, 24.0, 36.0, 20.0, color);
+    }
+}
+
 /// Hiển thị UI theo trạng thái State Machine
 pub fn draw_state_overlay(state: GameState, score: &Score, theme: &Theme) {
     let primary_color = theme.primary;
