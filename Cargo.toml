@@ -2,6 +2,8 @@
 name = "dino_runner"
 version = "0.1.0"
 edition = "2021"
+description = "Chrome Dino clone written in Rust with macroquad"
+license = "MIT"
 
 [dependencies]
 macroquad = { version = "0.4", features = ["audio"] }
